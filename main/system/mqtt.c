@@ -70,6 +70,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     mqtt_event_handler_cb(event_data);
 }
 
+extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
+extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
 void mqtt_task(void *pvParameters)
 {
     sys_param_t *settings = settings_get_parameter();
@@ -82,8 +84,10 @@ void mqtt_task(void *pvParameters)
 
     esp_mqtt_client_config_t mqtt_cfg = {
         .uri = settings->mqtt_url,
-        .skip_cert_common_name_check = true,
-        .use_global_ca_store = true,
+        .cert_pem = &server_root_cert_pem_start,
+        .cert_len = server_root_cert_pem_end - server_root_cert_pem_start,
+//        .skip_cert_common_name_check = true,
+//        .use_global_ca_store = true,
     };
 
     if (strlen(settings->mqtt_username) > 0) {

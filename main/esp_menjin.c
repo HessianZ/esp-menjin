@@ -58,10 +58,9 @@ void app_main()
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    ESP_ERROR_CHECK(esp_tls_init_global_ca_store());
-
-    esp_err_t err = esp_tls_set_global_ca_store(&server_root_cert_pem_start, server_root_cert_pem_end - server_root_cert_pem_start);
-    ESP_ERROR_CHECK(err);
+//    ESP_ERROR_CHECK(esp_tls_init_global_ca_store());
+//    esp_err_t err = esp_tls_set_global_ca_store(&server_root_cert_pem_start, server_root_cert_pem_end - server_root_cert_pem_start);
+//    ESP_ERROR_CHECK(err);
 
     xTaskCreate(init_wifi_task, "init_wifi_task", 4096, NULL, 3, NULL);
     xTaskCreate(mqtt_task, "mqtt_task", 4096, NULL, 3, NULL);
