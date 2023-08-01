@@ -15,11 +15,16 @@ static const char *TAG = "settings";
 
 static sys_param_t g_sys_param = {0};
 
-static const sys_param_t g_default_sys_param = {
+const sys_param_t g_default_sys_param = {
         .wifi_ssid = {0},
         .wifi_password = {0},
+        .mqtt_url = {0},
+        .mqtt_username = {0},
+        .mqtt_password = {0},
+        // 50Khz for default
+        .i2c_clock = 50000,
+        .i2c_address = 0x50,
 };
-
 
 esp_err_t settings_read_parameter_from_nvs(void)
 {
@@ -74,11 +79,19 @@ sys_param_t *settings_get_parameter(void)
     return &g_sys_param;
 }
 
+sys_param_t settings_get_default_parameter(void)
+{
+    return g_default_sys_param;
+}
+
 void settings_dump(void)
 {
-    ESP_LOGI(TAG, "wifi_ssid: %s", g_sys_param.wifi_ssid);
-    ESP_LOGI(TAG, "wifi_password: %s", g_sys_param.wifi_password);
-    ESP_LOGI(TAG, "mqtt_url: %s", g_sys_param.mqtt_url);
-    ESP_LOGI(TAG, "mqtt_username: %s", g_sys_param.mqtt_username);
-    ESP_LOGI(TAG, "mqtt_password: %s", g_sys_param.mqtt_password);
+    ESP_LOGI(TAG, "settings_dump >>>");
+    ESP_LOGI(TAG, "\twifi_ssid: %s", g_sys_param.wifi_ssid);
+    ESP_LOGI(TAG, "\twifi_password: %s", g_sys_param.wifi_password);
+    ESP_LOGI(TAG, "\tmqtt_url: %s", g_sys_param.mqtt_url);
+    ESP_LOGI(TAG, "\tmqtt_username: %s", g_sys_param.mqtt_username);
+    ESP_LOGI(TAG, "\tmqtt_password: %s", g_sys_param.mqtt_password);
+    ESP_LOGI(TAG, "\ti2c_clock: %d", g_sys_param.i2c_clock);
+    ESP_LOGI(TAG, "\ti2c_address: %d", g_sys_param.i2c_address);
 }

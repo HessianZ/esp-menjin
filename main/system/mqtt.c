@@ -1,3 +1,6 @@
+//
+// Created by Hessian on 2023/7/29.
+//
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
@@ -12,56 +15,95 @@
 #include "mqtt_client.h"
 #include "smartconfig.h"
 #include "settings.h"
+#include "app_menjin.h"
+
+#define MQTT_TOPIC_PREFIX "menjin/"
 
 static const char *TAG = "MQTT";
+static char g_client_id[32];
+static char g_topic_cmd[64];
+static char g_topic_notify[64];
+
+extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
+extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
+
+void mqtt_handle_menjin_cmd(char *payload, int len)
+{
+    if (len == 0) {
+        return;
+    }
+
+    if (strncmp(payload, "cmd ", 4) == 0) {
+        char cmd_str[4] = {0};
+        strncpy(cmd_str, payload + 4, len -4);
+        uint8_t cmd = atoi(cmd_str);
+        esp_err_t ret = menjin_cmd_write(cmd);
+        ESP_LOGI(TAG, "[menjin] do cmd: %d(%s), ret: %d", cmd, cmd_str, ret);
+    } else if (strncmp(payload, "open", len) == 0) {
+        menjin_cmd_write(MENJIN_CMD_KEY4_SPEAKER);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        menjin_cmd_write(MENJIN_CMD_KEY3_UNLOCK);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        menjin_cmd_write(MENJIN_CMD_KEY4_SPEAKER);
+    } else {
+        ESP_LOGW(TAG, "[menjin] unknown cmd: %.*s", len, payload);
+    }
+}
+
+void mqtt_client_id(char *id_string);
 
 static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
 {
     esp_mqtt_client_handle_t client = event->client;
+
     int msg_id;
     // your_context_t *context = event->context;
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-            msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
-            ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
 
-            msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
-            ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
+            msg_id = esp_mqtt_client_publish(client, g_topic_notify, g_client_id, 0, 1, 0);
+            ESP_LOGI(TAG, "publish %s to %s successful, msg_id=%d", g_client_id, g_topic_notify, msg_id);
 
-            msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
-            ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-            msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
-            ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
+            msg_id = esp_mqtt_client_subscribe(client, g_topic_cmd, 0);
+            ESP_LOGI(TAG, "subscribe %s successful, msg_id=%d", g_topic_cmd, msg_id);
             break;
+
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
             break;
 
         case MQTT_EVENT_SUBSCRIBED:
-            ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-            msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-            ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
+//            ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
+//            msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
+//            ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
             break;
+
         case MQTT_EVENT_UNSUBSCRIBED:
             ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
             break;
+
         case MQTT_EVENT_PUBLISHED:
             ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
             break;
+
         case MQTT_EVENT_DATA:
             ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-            printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
-            printf("DATA=%.*s\r\n", event->data_len, event->data);
+            ESP_LOGI(TAG, "Receive [%.*s] DATA: %.*s", event->topic_len, event->topic, event->data_len, event->data);
+
+            mqtt_handle_menjin_cmd(event->data, event->data_len);
+
             break;
+
         case MQTT_EVENT_ERROR:
             ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
             break;
+
         default:
             ESP_LOGI(TAG, "Other event id:%d", event->event_id);
             break;
     }
+
     return ESP_OK;
 }
 
@@ -70,10 +112,19 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     mqtt_event_handler_cb(event_data);
 }
 
-extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
-extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
+void mqtt_client_id(char *id_string)
+{
+    id_string[0] = '\0';
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    sprintf(id_string, "menjin-%02x%02X%02X%02x%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
 void mqtt_task(void *pvParameters)
 {
+    g_topic_cmd[0] = '\0';
+    g_topic_notify[0] = '\0';
+
     sys_param_t *settings = settings_get_parameter();
 
     if (strlen(settings->mqtt_url) == 0) {
@@ -82,9 +133,15 @@ void mqtt_task(void *pvParameters)
         return;
     }
 
+    mqtt_client_id(g_client_id);
+
+    sprintf(g_topic_cmd, MQTT_TOPIC_PREFIX "%s/cmd", g_client_id);
+    sprintf(g_topic_notify, MQTT_TOPIC_PREFIX "%s/notify", g_client_id);
+
     esp_mqtt_client_config_t mqtt_cfg = {
+        .client_id = g_client_id,
         .uri = settings->mqtt_url,
-        .cert_pem = &server_root_cert_pem_start,
+        .cert_pem = (char *) &server_root_cert_pem_start,
         .cert_len = server_root_cert_pem_end - server_root_cert_pem_start,
 //        .skip_cert_common_name_check = true,
 //        .use_global_ca_store = true,
@@ -112,5 +169,6 @@ void mqtt_task(void *pvParameters)
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, client);
     esp_mqtt_client_start(client);
     ESP_LOGI(TAG, "mqtt_client started");
+
     vTaskDelete(NULL);
 }
