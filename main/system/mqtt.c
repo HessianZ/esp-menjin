@@ -20,6 +20,8 @@
 #define MQTT_TOPIC_PREFIX "menjin/"
 
 static const char *TAG = "MQTT";
+
+static esp_mqtt_client_handle_t g_client;
 static char g_client_id[32];
 static char g_topic_cmd[64];
 static char g_topic_notify[64];
@@ -62,8 +64,14 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
 
-            msg_id = esp_mqtt_client_publish(client, g_topic_notify, g_client_id, 0, 1, 0);
-            ESP_LOGI(TAG, "publish %s to %s successful, msg_id=%d", g_client_id, g_topic_notify, msg_id);
+            tcpip_adapter_ip_info_t local_ip;
+            tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &local_ip);
+
+            char json[128] = {0};
+            sprintf(json, "ready, ip: %hu.%hu.%hu.%hu", IP2STR(&local_ip.ip));
+
+            msg_id = esp_mqtt_client_publish(client, g_topic_notify, json, 0, 1, 0);
+            ESP_LOGI(TAG, "publish %s to %s successful, msg_id=%d", json, g_topic_notify, msg_id);
 
             msg_id = esp_mqtt_client_subscribe(client, g_topic_cmd, 0);
             ESP_LOGI(TAG, "subscribe %s successful, msg_id=%d", g_topic_cmd, msg_id);
@@ -143,7 +151,7 @@ void mqtt_task(void *pvParameters)
         .uri = settings->mqtt_url,
         .cert_pem = (char *) &server_root_cert_pem_start,
         .cert_len = server_root_cert_pem_end - server_root_cert_pem_start,
-//        .skip_cert_common_name_check = true,
+        .skip_cert_common_name_check = true,
 //        .use_global_ca_store = true,
     };
 
@@ -165,10 +173,15 @@ void mqtt_task(void *pvParameters)
     ESP_LOGI(TAG, "mqtt_cfg.username: %s", mqtt_cfg.username);
     ESP_LOGI(TAG, "mqtt_cfg.password: %s", mqtt_cfg.password);
 
-    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
-    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, client);
-    esp_mqtt_client_start(client);
+    g_client = esp_mqtt_client_init(&mqtt_cfg);
+    esp_mqtt_client_register_event(g_client, ESP_EVENT_ANY_ID, mqtt_event_handler, g_client);
+    esp_mqtt_client_start(g_client);
     ESP_LOGI(TAG, "mqtt_client started");
 
     vTaskDelete(NULL);
+}
+
+void mqtt_notify(char* content)
+{
+    esp_mqtt_client_publish(g_client, g_topic_notify, content, 0, 1, 0);
 }

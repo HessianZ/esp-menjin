@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gpio.h>
+#include <mdns.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -86,6 +87,46 @@ _Noreturn static void led_task(void *param)
     }
 }
 
+static bool mdns_initialized = false;
+
+static void initialise_mdns()
+{
+    if (mdns_initialized) {
+        return;
+    }
+    ESP_LOGI(TAG, "Initializing mDNS...");
+    char hostname[] = "esp-menjin";
+    //initialize mDNS
+    ESP_ERROR_CHECK( mdns_init() );
+    //set mDNS hostname (required if you want to advertise services)
+    ESP_ERROR_CHECK( mdns_hostname_set(hostname) );
+    ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
+//    //set default mDNS instance name
+//    ESP_ERROR_CHECK( mdns_instance_name_set(EXAMPLE_MDNS_INSTANCE) );
+
+    // esp chip id
+    uint8_t chipId[6];
+    esp_read_mac(chipId, ESP_MAC_WIFI_STA);
+    // chip id hex string
+    char chipIdHex[13];
+    sprintf(chipIdHex, "%02x%02x%02x%02x%02x%02x", chipId[0], chipId[1], chipId[2], chipId[3], chipId[4], chipId[5]);
+
+    //structure with TXT records
+    mdns_txt_item_t serviceTxtData[4] = {
+            {"chipId", chipIdHex},
+            {"version", "1.0"},
+            {"board", "esp8266"},
+            {"vendor", "witgine tech"},
+    };
+
+    //initialize service
+    ESP_ERROR_CHECK( mdns_service_add("menjin-api", "_http", "_tcp", 80, serviceTxtData, 4) );
+
+    mdns_initialized = true;
+
+    ESP_LOGI(TAG, "mDNS Initialize finished");
+}
+
 static void disconnect_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
 {
@@ -98,6 +139,13 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
 {
     ESP_LOGI(TAG, "WiFi connected ...");
     g_app_state = APP_RUNNING;
+}
+
+static void menjin_ring_callback(void)
+{
+    ESP_LOGI(TAG, "Menjin ring callback");
+
+    mqtt_notify("ring");
 }
 
 void app_main()
@@ -132,6 +180,12 @@ void app_main()
     xTaskCreate(init_wifi_task, "init_wifi_task", 4096, NULL, 3, NULL);
     xTaskCreate(mqtt_task, "mqtt_task", 4096, NULL, 3, NULL);
     xTaskCreate(led_task, "led_task", 2048, NULL, 1, NULL);
+    xTaskCreate(menjin_ring_detect_task, "menjin_ring_detect_task", 2048, NULL, 2, NULL);
+
+    menjin_set_ring_callback(menjin_ring_callback);
+
+    // 开启mDNS后会导致MQTT无法连接，暂时禁用
+//    initialise_mdns();
 
     http_server_init();
 }

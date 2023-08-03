@@ -1,7 +1,10 @@
+#include <sys/cdefs.h>
 //
 // Created by Hessian on 2023/7/30.
 //
+#include <adc.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "esp_log.h"
 #include "esp_err.h"
@@ -24,6 +27,11 @@ static const char *TAG = "APP_MENJIN";
 #define NACK_VAL                     0x1              /*!< I2C nack value */
 #define LAST_NACK_VAL                0x2              /*!< I2C last_nack value */
 
+
+#define ADC_THRESHOLD 50 // ADC输入的阈值
+#define CALLBACK_INTERVAL_MS (60 * 1000) // 回调函数的调用频率，单位：毫秒
+
+static void (*g_ring_callback)(void) = NULL; // ADC输入的回调函数
 
 /**
  * @brief i2c master initialization
@@ -99,4 +107,51 @@ uint32_t menjin_get_clock()
 void menjin_set_clock(uint32_t clock)
 {
     i2c_master_set_clock(clock);
+}
+
+void menjin_set_ring_callback(void (*callback)(void)) {
+    g_ring_callback = callback;
+}
+
+// ADC输入检测任务
+_Noreturn void menjin_ring_detect_task(void* pvParameters) {
+    TickType_t lastCallbackTime = 0;
+    uint16_t adcValue = 0;
+    esp_err_t err;
+
+    // 1. init adc
+    adc_config_t adc_config;
+
+    // Depend on menuconfig->Component config->PHY->vdd33_const value
+    // When measuring system voltage(ADC_READ_VDD_MODE), vdd33_const must be set to 255.
+    adc_config.mode = ADC_READ_TOUT_MODE;
+    adc_config.clk_div = 16; // ADC sample collection clock = 80MHz/clk_div = 10MHz
+    ESP_ERROR_CHECK(adc_init(&adc_config));
+
+    while (1) {
+        // 读取ADC输入值
+        err = adc_read(&adcValue);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "ADC read failed: %d\n", err);
+            continue;
+        }
+
+        // 检查ADC输入值是否大于50
+        if (adcValue > ADC_THRESHOLD) {
+            ESP_LOGI(TAG, "ADC value: %d\n", adcValue);
+            // 检查是否满足回调函数调用频率限制
+            if (xTaskGetTickCount() - lastCallbackTime >= pdMS_TO_TICKS(CALLBACK_INTERVAL_MS)) {
+                // 调用回调函数
+                if (g_ring_callback != NULL) {
+                    g_ring_callback();
+                }
+
+                // 更新最后回调时间
+                lastCallbackTime = xTaskGetTickCount();
+            }
+        }
+
+        // 一定的延迟，避免过于频繁的检测
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }
